@@ -25,8 +25,11 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="search_images",
-            description="Search for images on DuckDuckGo and return image URLs with metadata. "
-                       "This tool uses Selenium to scrape image results from DuckDuckGo Images.",
+            description="Search for images on DuckDuckGo and return image URLs with full source "
+                       "attribution (source page URL, publisher domain, article title, image "
+                       "dimensions). Each result carries credit info so callers can attribute the "
+                       "image instead of just seeing a proxied redirect URL. Uses Selenium to "
+                       "scrape image results from DuckDuckGo Images.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -104,7 +107,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name == "search_images":
         scraper = scrape_duckduckgo_images_selenium
         images = await _run_scraper(scraper, query, num_images, headless)
-        return [TextContent(type="text", text=_format_text(query, images))]
+        return [TextContent(type="text", text=_format_ddg_text(query, images))]
     elif name == "search_maps_images":
         require_attribution = arguments.get("require_attribution", False)
         images = await _run_scraper(
@@ -145,6 +148,36 @@ def _format_text(query: str, images: list) -> str:
     else:
         result_text = f"No images found for '{query}'."
     return result_text
+
+
+def _format_ddg_text(query: str, images: list) -> str:
+    """Human-readable DDG results with credit/attribution.
+
+    Each image entry includes the source page URL, the publisher domain, the
+    article title (when DDG supplies one), and the image dimensions, so the
+    caller can credit the image properly instead of just seeing a proxied URL.
+    """
+    if not images:
+        return f"No images found for '{query}'."
+
+    lines = [f"Found {len(images)} images for '{query}':\n"]
+    for idx, img in enumerate(images, 1):
+        lines.append(f"{idx}. {img['url']}")
+        if img.get("source_domain"):
+            credit = f"   Credit: {img['source_domain']}"
+            if img.get("source_url"):
+                credit += f" ({img['source_url']})"
+            lines.append(credit)
+        elif img.get("source_url"):
+            lines.append(f"   Source: {img['source_url']}")
+        if img.get("title"):
+            lines.append(f"   Title: {img['title']}")
+        if img.get("width") and img.get("height"):
+            lines.append(f"   Dimensions: {img['width']} × {img['height']}")
+        if img.get("alt"):
+            lines.append(f"   Alt: {img['alt']}")
+        lines.append("")
+    return "\n".join(lines)
 
 
 async def main():

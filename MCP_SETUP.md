@@ -73,8 +73,22 @@ Once configured, you can ask Claude to search for images:
 - "Find 8 photos of the Eiffel Tower on Google Maps"
 - "Show me 5 photos of Joe's Pizza in NYC from Google Maps"
 
-The `search_images` tool returns URLs to images found on DuckDuckGo as formatted text.
+The `search_images` tool returns formatted text with each image's source attribution — including the publisher domain, source page URL, article title, and image dimensions — so you can credit the image instead of just getting a proxied redirect.
 The `search_maps_images` tool returns a JSON payload with each photo's URL, the contributor's name, and the contributor's profile URL — so you can credit the photographer if you reuse the image.
+
+### `search_images` output
+
+```
+Found 2 images for 'cute kittens':
+
+1. https://tse3.mm.bing.net/th/id/OIP.6ytt01A4fK8ToB7he6XJegHaFD?pid=Api
+   Credit: publicdomainpictures.net (https://www.publicdomainpictures.net/en/view-image.php?image=588007&picture=cute-kittens-playing-with-yarn)
+   Title: Cute Kittens Playing With Yarn Free Stock Photo - Public Domain Pictures
+   Dimensions: 1920 × 1309
+   Alt: Cute Kittens Playing With Yarn Free Stock Photo - Public Domain Pictures
+```
+
+The `url` returned is the real image URL with DuckDuckGo's `iu/?u=` redirector unwrapped. Suggested credit format: `Image: {title or alt} — {source_domain} ({source_url})`.
 
 ### `search_maps_images` JSON shape
 
@@ -93,7 +107,7 @@ The `search_maps_images` tool returns a JSON payload with each photo's URL, the 
 }
 ```
 
-By default, the scraper prefers photos with visible author attribution and falls back to the place's official photo strip when fewer attributed photos are available — so you always get `num_images` results if any exist. Attributed photos are returned first, then official ones fill the remaining slots. Pass `require_attribution: true` to disable the fallback and only get attributed photos.
+By default, the scraper prefers photos with visible author attribution and falls back to the place's official photo strip when fewer attributed photos are available — so you always get `num_images` results if any exist. Attributed photos are returned first, then official ones fill the remaining slots. Pass `require_attribution: true` to disable the fallback and only get attributed photos. Suggested credit format with an author: `Photo by {author} ({author_profile_url})`. For official photos with no author: `Image: {Place Name} via Google Maps`.
 
 ## Tool Parameters
 
@@ -103,12 +117,16 @@ By default, the scraper prefers photos with visible author attribution and falls
 - `num_images` (optional): Number of images to retrieve (1-50, default: 5)
 - `headless` (optional): Run browser in headless mode (default: true)
 
+Each result includes `url`, `alt`, `title`, `source_url`, `source_domain`, `source_favicon_url`, `width`, `height`, and the original `ddg_proxied_url` for reference.
+
 ### `search_maps_images`
 
 - `query` (required): Place to search for on Google Maps (e.g. "Eiffel Tower", "Joe's Pizza NYC")
 - `num_images` (optional): Number of photos to retrieve (1-50, default: 5)
 - `headless` (optional): Run browser in headless mode (default: true)
 - `require_attribution` (optional, default: false): If true, only return photos with visible author attribution. If false (default), prefer attributed photos but fall back to the place's official photo strip when fewer attributed photos are available.
+
+Each result includes `url`, `author` (contributor name), and `author_profile_url` (the contributor's Google Maps profile URL).
 
 ## Testing the MCP Server
 
