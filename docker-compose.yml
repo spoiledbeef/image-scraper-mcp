@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  image-scraper-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: image-scraper-mcp
+    stdin_open: true
+    tty: true
+    # MCP servers communicate via stdio
+    # The container will be run with docker run -i for stdio communication
+    restart: "no"
+    environment:
+      - PYTHONUNBUFFERED=1
+    # Add shared memory for Chrome
+    shm_size: '2gb'

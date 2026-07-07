@@ -1,0 +1,16 @@
+[project]
+name = "google-images-scraper"
+version = "0.1.0"
+description = "A Python web scraper for Google Images"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "selenium>=4.15.0",
+    "lxml>=4.9.0",
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+image-scraper-mcp = "image_scraper_mcp_server:main"

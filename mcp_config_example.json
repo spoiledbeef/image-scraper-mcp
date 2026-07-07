@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "image-scraper": {
+      "command": "./run_mcp_docker.sh",
+      "args": []
+    }
+  }
+}
