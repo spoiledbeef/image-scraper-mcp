@@ -73,8 +73,27 @@ Once configured, you can ask Claude to search for images:
 - "Find 8 photos of the Eiffel Tower on Google Maps"
 - "Show me 5 photos of Joe's Pizza in NYC from Google Maps"
 
-The `search_images` tool returns URLs to images found on DuckDuckGo.
-The `search_maps_images` tool returns photo URLs from a Google Maps place page (no API key required).
+The `search_images` tool returns URLs to images found on DuckDuckGo as formatted text.
+The `search_maps_images` tool returns a JSON payload with each photo's URL, the contributor's name, and the contributor's profile URL — so you can credit the photographer if you reuse the image.
+
+### `search_maps_images` JSON shape
+
+```json
+{
+  "query": "Joe's Pizza NYC",
+  "source": "google_maps",
+  "count": 3,
+  "images": [
+    {
+      "url": "https://lh3.googleusercontent.com/...",
+      "author": "Mary van Lutsenburg Maas",
+      "author_profile_url": "https://www.google.com/maps/contrib/118270766331517021243"
+    }
+  ]
+}
+```
+
+By default, the scraper prefers photos with visible author attribution and falls back to the place's official photo strip when fewer attributed photos are available — so you always get `num_images` results if any exist. Attributed photos are returned first, then official ones fill the remaining slots. Pass `require_attribution: true` to disable the fallback and only get attributed photos.
 
 ## Tool Parameters
 
@@ -89,6 +108,7 @@ The `search_maps_images` tool returns photo URLs from a Google Maps place page (
 - `query` (required): Place to search for on Google Maps (e.g. "Eiffel Tower", "Joe's Pizza NYC")
 - `num_images` (optional): Number of photos to retrieve (1-50, default: 5)
 - `headless` (optional): Run browser in headless mode (default: true)
+- `require_attribution` (optional, default: false): If true, only return photos with visible author attribution. If false (default), prefer attributed photos but fall back to the place's official photo strip when fewer attributed photos are available.
 
 ## Testing the MCP Server
 

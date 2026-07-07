@@ -3,6 +3,9 @@
 Google Maps Images Scraper
 Uses Selenium to fetch photos shown on a Google Maps place page for a given
 query (e.g. "Eiffel Tower" or "Joe's Pizza NYC"). No API key required.
+
+Each returned photo carries the contributor's name and profile URL so callers
+can credit the photographer if they reuse the image.
 """
 
 from selenium import webdriver
@@ -12,6 +15,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from urllib.parse import quote
+import json
 import os
 import re
 import sys
@@ -28,21 +32,6 @@ RESULT_SELECTORS = [
     'div[class*="section-result"]',
 ]
 
-# CSS selectors that target place photos. Google serves them from
-# googleusercontent.com; we accept several lh3/lh5 variants.
-IMAGE_SELECTORS = [
-    'img[src*="googleusercontent"]',
-    'img[src*="lh3.googleusercontent.com"]',
-    'img[src*="lh5.googleusercontent.com"]',
-    'img[src*="maps.googleapis.com"]',
-]
-
-# Pattern used as a final safety net when iterating img elements: keep any src
-# pointing at a known Google photo CDN.
-GOOGLE_PHOTO_HOST_RE = re.compile(
-    r"https?://(?:lh3|lh4|lh5|lh6)\.googleusercontent\.com/", re.IGNORECASE
-)
-
 # Phrases that appear on the "accept all" / "I agree" button of Google's
 # consent page across locales. Lowercased substrings; we click the first
 # consent-form button whose aria-label or text matches any of these.
@@ -57,6 +46,40 @@ CONSENT_ACCEPT_PATTERNS = [
     "принять", "согласен",
     "同意", "すべて接受", "接受", "すべて同意",
 ]
+
+# Match a CSS background-image value, e.g.
+#   background-image: url('https://...'); or url("https://...")
+BACKGROUND_IMAGE_RE = re.compile(r"""url\((['"]?)(.+?)\1\)""")
+
+# Match an aria-label of the form "Photo N in the review by NAME" / "Foto N na
+# crítica de NAME" / "Photographie N dans la critique par NAME", etc. Group 1
+# captures the contributor's name.
+AUTHOR_LABEL_RE = re.compile(
+    r"^(?:Photo|Foto|Fotograf[ií]a|Photographie)\s+\d+\s+"
+    r"(?:in the |of the |na |no |en la |en el |dans la |dans le |im |nella |nel )?"
+    r"(?:review|cr[ií]tica|critica|reseña|resena|critique|rezension|recensione)\s+"
+    r"(?:by|de|del|do|da|por|from|par|von|di|della)\s+"
+    r"(.+)$",
+    re.IGNORECASE,
+)
+
+# CSS selector that finds review-photo buttons. Review photos are served via
+# inline background-image (not <img src>), so anchoring on `background-image`
+# avoids matching generic tooltip/info buttons that just happen to contain
+# "crítica"/"review" in their aria-label.
+AUTHOR_BUTTON_SELECTOR = (
+    'button[style*="background-image"]'
+)
+
+# Heuristic to exclude reviewer avatars from the fallback image sweep.
+# Avatars use small sizes with the `rp` (round-profile) flag, and the URL
+# typically either ends after `-p-rp` or continues into `-mo-br100` etc.
+AVATAR_SIZE_RE = re.compile(r"=w\d{1,3}-h\d{1,3}-p-rp(?:[-?&=]|$)", re.IGNORECASE)
+
+# Match any photo hosted on Google's photo CDN.
+GOOGLE_PHOTO_HOST_RE = re.compile(
+    r"https?://(?:lh3|lh4|lh5|lh6)\.googleusercontent\.com/", re.IGNORECASE
+)
 
 
 def _build_options(headless: bool) -> Options:
@@ -150,52 +173,162 @@ def _accept_consent_if_present(driver):
     return False
 
 
-def _collect_image_urls(driver, num_images: int):
-    """Collect up to num_images googleusercontent photo URLs from the page."""
-    # Try the prioritized CSS selectors first.
-    candidates = _find_first(driver, IMAGE_SELECTORS)
+def _parse_author_from_aria_label(aria_label):
+    """Extract the author name from a review-photo aria-label.
 
-    # Fallback: any <img> whose src matches a Google photo CDN. This catches
-    # the case where Google has rotated the class names again.
-    if not candidates:
-        all_imgs = driver.find_elements(By.TAG_NAME, 'img')
-        candidates = [
-            img for img in all_imgs
-            if (img.get_attribute('src') or '').startswith(
-                ('http://', 'https://')
-            )
-            and GOOGLE_PHOTO_HOST_RE.search(img.get_attribute('src') or '')
-        ]
+    Accepts labels like "Photo 1 in the review by NAME" (English) or
+    "Foto 1 na crítica de NAME" (Portuguese), among other locales.
+    Returns the name string, or None if the label doesn't match a known
+    review-photo pattern.
+    """
+    if not aria_label:
+        return None
+    m = AUTHOR_LABEL_RE.match(aria_label.strip())
+    if m:
+        return m.group(1).strip() or None
+    return None
+
+
+def _extract_background_image_url(button):
+    """Pull the photo URL out of a button's inline background-image style.
+
+    Returns the URL string or None. The button is a Selenium WebElement.
+    """
+    try:
+        style = button.get_attribute("style") or ""
+    except Exception:
+        return None
+    m = BACKGROUND_IMAGE_RE.search(style)
+    if not m:
+        return None
+    return m.group(2).strip().strip("'\"")
+
+
+def _find_associated_contrib_link(button):
+    """Find the contributor profile link associated with a review photo button.
+
+    Google's review layout puts the contributor avatar/link as a sibling of
+    the photo button within the same review container. The link is rendered
+    as a `<button data-href=".../maps/contrib/<id>/...">` (not an <a>), so
+    we look for both anchor and button variants. We try several XPath
+    positions to locate it; first match wins. Returns the href string or "".
+    """
+    # Each entry: (xpath, attribute_to_read)
+    candidates = (
+        (".//preceding-sibling::*[1]//*[@data-href]", "data-href"),
+        (".//preceding-sibling::*[1]//a[@href]", "href"),
+        (".//preceding-sibling::*[2]//*[@data-href]", "data-href"),
+        (".//preceding-sibling::*[2]//a[@href]", "href"),
+        (".//parent::*//*[@data-href]", "data-href"),
+        (".//parent::*//a[@href]", "href"),
+        (".//ancestor::*[2]//*[@data-href]", "data-href"),
+        (".//ancestor::*[2]//a[@href]", "href"),
+        (".//ancestor::*[3]//*[@data-href]", "data-href"),
+        (".//ancestor::*[3]//a[@href]", "href"),
+    )
+    for xp, attr in candidates:
+        try:
+            elements = button.find_elements(By.XPATH, xp)
+        except Exception:
+            continue
+        for el in elements:
+            try:
+                href = el.get_attribute(attr) or ""
+            except Exception:
+                continue
+            if "/maps/contrib/" in href:
+                return href
+    return ""
+
+
+def _extract_review_photos(driver, num_images):
+    """Find up to num_images review-attributed photos on the place panel.
+
+    Each entry has shape {"url", "author", "author_profile_url"}. Empty list
+    if no review photos are present.
+    """
+    try:
+        buttons = driver.find_elements(By.CSS_SELECTOR, AUTHOR_BUTTON_SELECTOR)
+    except Exception:
+        return []
 
     images = []
     seen = set()
-    for img in candidates:
+    for btn in buttons:
         if len(images) >= num_images:
             break
         try:
-            src = img.get_attribute('src')
+            aria = btn.get_attribute("aria-label") or ""
+        except Exception:
+            continue
+        author = _parse_author_from_aria_label(aria)
+        if not author:
+            continue
+        url = _extract_background_image_url(btn)
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        profile_url = _find_associated_contrib_link(btn)
+        images.append({
+            "url": url,
+            "author": author,
+            "author_profile_url": profile_url,
+        })
+    return images
+
+
+def _extract_fallback_photos(driver, num_images):
+    """Pull photo URLs from <img> tags as a non-attributed fallback.
+
+    Reviewer avatars are filtered out by size-hint heuristic. Each entry has
+    shape {"url", "author": "", "author_profile_url": ""}.
+    """
+    images = []
+    seen = set()
+    try:
+        imgs = driver.find_elements(
+            By.CSS_SELECTOR, 'img[src*="googleusercontent"]'
+        )
+    except Exception:
+        return images
+    for img in imgs:
+        if len(images) >= num_images:
+            break
+        try:
+            src = img.get_attribute("src") or ""
         except Exception:
             continue
         if not src or src in seen:
             continue
         if not GOOGLE_PHOTO_HOST_RE.search(src):
             continue
+        if AVATAR_SIZE_RE.search(src):
+            continue
         seen.add(src)
-        images.append({'url': src, 'alt': '', 'title': ''})
+        images.append({
+            "url": src,
+            "author": "",
+            "author_profile_url": "",
+        })
     return images
 
 
-def scrape_google_maps_images(query, num_images=5, headless=True):
-    """
-    Scrape Google Maps for place photos matching the given query.
+def scrape_google_maps_images(query, num_images=5, headless=True, require_attribution=False):
+    """Scrape Google Maps for place photos matching the given query.
 
     Args:
         query (str): Place to search for (e.g. "Eiffel Tower", "Joe's Pizza NYC")
         num_images (int): Maximum number of photos to return (default: 5)
         headless (bool): Run Chrome in headless mode (default: True)
+        require_attribution (bool): If True, return only photos with visible
+            author attribution. If False (default), prefer attributed photos
+            but fall back to the place's official photo strip when fewer
+            attributed photos are available. Attributed photos are always
+            returned first.
 
     Returns:
-        list: List of dicts with keys "url", "alt", "title". Empty on failure.
+        list: List of dicts with keys "url", "author", "author_profile_url".
+              Empty on failure.
     """
     driver = None
     try:
@@ -226,21 +359,31 @@ def scrape_google_maps_images(query, num_images=5, headless=True):
 
         clicked = _try_click_first_result(driver)
         if clicked:
-            # Let the place panel render and load the photo strip.
             time.sleep(3)
             try:
                 WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, 'img[src*="googleusercontent"]'))
+                    EC.presence_of_element_located((By.CSS_SELECTOR, 'button[aria-label*="review"], button[aria-label*="crítica"]'))
                 )
             except Exception:
                 print("Photo strip did not appear within timeout; continuing anyway.", file=sys.stderr)
 
-        # Scroll the photo strip to encourage lazy loading.
+        # Scroll the panel to encourage lazy loading of additional reviews.
         for _ in range(3):
             driver.execute_script("window.scrollBy(0, 600);")
             time.sleep(1)
 
-        images = _collect_image_urls(driver, num_images)
+        images = _extract_review_photos(driver, num_images)
+
+        # Optionally top up with unattributed photos.
+        if not require_attribution and len(images) < num_images:
+            existing = {i["url"] for i in images}
+            for img in _extract_fallback_photos(driver, num_images - len(images)):
+                if img["url"] in existing:
+                    continue
+                images.append(img)
+                if len(images) >= num_images:
+                    break
+
         return images[:num_images]
 
     except Exception as e:
@@ -255,7 +398,7 @@ def scrape_google_maps_images(query, num_images=5, headless=True):
 
 
 def main():
-    """Command-line entry point."""
+    """Command-line entry point. Prints the result as JSON."""
     if len(sys.argv) < 2:
         print("Usage: python image_scraper_maps.py <search_query> [num_images]")
         print("Example: python image_scraper_maps.py 'Eiffel Tower' 5")
@@ -269,14 +412,13 @@ def main():
 
     images = scrape_google_maps_images(query, num_images)
 
-    if images:
-        print(f"\n{'=' * 80}")
-        print(f"Found {len(images)} images:\n")
-        for idx, img in enumerate(images, 1):
-            print(f"{idx}. {img['url']}")
-    else:
-        print("No images found. Google Maps may be blocking the request.")
-        print("Try running with headless=False to debug.")
+    payload = {
+        "query": query,
+        "source": "google_maps",
+        "count": len(images),
+        "images": images,
+    }
+    print(json.dumps(payload, indent=2))
 
 
 if __name__ == "__main__":
