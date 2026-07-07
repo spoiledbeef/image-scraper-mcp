@@ -12,6 +12,7 @@ WORKDIR /app
 # Copy project files
 COPY pyproject.toml ./
 COPY image_scraper_selenium.py ./
+COPY image_scraper_maps.py ./
 COPY image_scraper_mcp_server.py ./
 
 # Install uv for faster dependency management

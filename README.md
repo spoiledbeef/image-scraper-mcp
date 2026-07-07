@@ -1,12 +1,14 @@
-# DuckDuckGo Images Scraper
+# Image Scraper
 
-A Python web scraper that retrieves the first five (or more) DuckDuckGo Image results for a given search query.
+A Python web scraper that retrieves images for a given search query. Supports DuckDuckGo Images and Google Maps place photos (no API key required).
 
 ## Features
 
-- Two scraping methods:
-  - **BeautifulSoup version** (`image_scraper.py`): Lightweight and fast
-  - **Selenium version** (`image_scraper_selenium.py`): More reliable with better results
+- Three scraping scripts:
+  - **BeautifulSoup DuckDuckGo** (`image_scraper.py`): Lightweight and fast
+  - **Selenium DuckDuckGo** (`image_scraper_selenium.py`): More reliable with better results
+  - **Selenium Google Maps** (`image_scraper_maps.py`): Place photo scraper (no API key)
+- MCP server (`image_scraper_mcp_server.py`) exposing both `search_images` and `search_maps_images` tools
 - Configurable number of images to retrieve
 - Option to download images locally
 - Error handling and user-friendly output
@@ -41,6 +43,12 @@ uv run python image_scraper.py "cute cats" 10
 uv run python image_scraper_selenium.py "cute cats" 5
 ```
 
+### Google Maps place photos
+
+```bash
+uv run python image_scraper_maps.py "Eiffel Tower" 5
+```
+
 ## Examples
 
 ```bash
@@ -52,6 +60,9 @@ uv run python image_scraper_selenium.py "sports cars" 10
 
 # Search for multiple words
 uv run python image_scraper.py "golden retriever puppy" 5
+
+# Get 8 photos of a restaurant from Google Maps
+uv run python image_scraper_maps.py "Joe's Pizza NYC" 8
 ```
 
 ## Output

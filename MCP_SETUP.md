@@ -70,13 +70,24 @@ Once configured, you can ask Claude to search for images:
 - "Search for 5 images of cute cats"
 - "Find 10 images of mountain sunsets"
 - "Look for images of vintage cars"
+- "Find 8 photos of the Eiffel Tower on Google Maps"
+- "Show me 5 photos of Joe's Pizza in NYC from Google Maps"
 
-The tool will return URLs to images found on DuckDuckGo.
+The `search_images` tool returns URLs to images found on DuckDuckGo.
+The `search_maps_images` tool returns photo URLs from a Google Maps place page (no API key required).
 
 ## Tool Parameters
 
+### `search_images`
+
 - `query` (required): Search query for images
 - `num_images` (optional): Number of images to retrieve (1-50, default: 5)
+- `headless` (optional): Run browser in headless mode (default: true)
+
+### `search_maps_images`
+
+- `query` (required): Place to search for on Google Maps (e.g. "Eiffel Tower", "Joe's Pizza NYC")
+- `num_images` (optional): Number of photos to retrieve (1-50, default: 5)
 - `headless` (optional): Run browser in headless mode (default: true)
 
 ## Testing the MCP Server
